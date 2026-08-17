@@ -2451,7 +2451,7 @@ Usage:
     handler: async (_args, ctx) => insertIntercomId(ctx),
   });
 
-  pi.registerShortcut("alt+m", {
+  pi.registerShortcut("alt+i", {
     description: "Open session intercom",
     handler: async (ctx) => openIntercomOverlay(ctx),
   });

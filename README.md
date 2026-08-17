@@ -7,7 +7,7 @@
 Direct 1:1 messaging between pi sessions on the same machine. Send context, findings, or requests from one session to another — whether you're driving the conversation or letting agents coordinate.
 
 ```text
-User flow: press Alt+M or run /intercom to pick a session and send a message
+User flow: press Alt+I or run /intercom to pick a session and send a message
 ```
 
 ## Why
@@ -24,7 +24,7 @@ Pi-intercom also integrates well with [pi-subagents](https://github.com/nicobail
 
 ## In One Minute
 
-Each pi session that has `pi-intercom` loaded and enabled connects to a tiny local broker over a local IPC transport. The broker keeps track of connected sessions and routes direct messages to the one you target by name or session ID. The extension gives you both a tool (`intercom`) and a small overlay UI (`/intercom` or `Alt+M`). Incoming messages are rendered inline inside the recipient session, can trigger a turn immediately by default, and are also stored in Pi session history as extension entries. If you want a stricter local trust posture, `inboundTrigger` can reduce or disable auto-triggering.
+Each pi session that has `pi-intercom` loaded and enabled connects to a tiny local broker over a local IPC transport. The broker keeps track of connected sessions and routes direct messages to the one you target by name or session ID. The extension gives you both a tool (`intercom`) and a small overlay UI (`/intercom` or `Alt+I`). Incoming messages are rendered inline inside the recipient session, can trigger a turn immediately by default, and are also stored in Pi session history as extension entries. If you want a stricter local trust posture, `inboundTrigger` can reduce or disable auto-triggering.
 
 ## Install
 
@@ -62,7 +62,7 @@ If a session is unnamed, pi-intercom exposes a collision-resistant runtime-only 
 
 ### From the Keyboard
 
-Press **Alt+M** or type `/intercom` to open the session list overlay:
+Press **Alt+I** or type `/intercom` to open the session list overlay:
 
 1. **Select a session** — Use arrow keys to pick a target session
 2. **Compose message** — Write your message in the compose overlay
@@ -382,7 +382,7 @@ Only registered in sessions where `pi-subagents` supplied the required child bri
 
 | Key | Action |
 |-----|--------|
-| Alt+M | Open session list overlay |
+| Alt+I | Open session list overlay |
 | ↑/↓ | Navigate session list |
 | Enter | Select session / Send message |
 | Escape | Cancel / Close overlay |

@@ -1,4 +1,5 @@
-node_modules/
+# Ignore a directory, regular file, or symlink named node_modules.
+node_modules
 *.log
 .DS_Store
 

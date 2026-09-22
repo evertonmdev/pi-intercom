@@ -1148,6 +1148,11 @@ test("intercom tool renders compact call and result rows", async () => {
   }, { isPartial: false, expanded: false }, renderTheme, { isError: false, expanded: false }));
   assert.match(resultText, /✓ Message sent to planner \(abcdef12\)/);
 
+  const progressText = renderToText(intercomTool.renderResult({
+    content: [{ type: "text", text: "Aguardando planner · destinatário executando read · 12s" }],
+  }, { isPartial: true }, renderTheme, { isError: false }));
+  assert.match(progressText, /Aguardando planner · destinatário executando read · 12s/);
+
   const errorText = renderToText(intercomTool.renderResult({
     content: [{ type: "text", text: "Missing 'to' or 'message' parameter" }],
     details: { error: true, reason: "Missing target" },
@@ -2357,6 +2362,68 @@ test("regular intercom ask timeout reports message id and delivery state", { con
     }
     await senderHarness.emitLifecycle("session_shutdown");
     await receiverHarness.emitLifecycle("session_shutdown");
+    await cleanup();
+  }
+});
+
+test("blocking ask streams delivery and recipient activity, then stops updates after reply", { concurrency: false }, async () => {
+  const { planner, orchestrator, cleanup } = await setupClients();
+  const harness = createExtensionHarness("progress-worker", { sessionId: "session-progress-worker" });
+  const updates: Array<{ content: Array<{ text: string }>; details?: { intercomAskProgress?: { phase: string; recipientStatus: string } } }> = [];
+  try {
+    const { default: piIntercomExtension } = await import("./index.ts");
+    piIntercomExtension(harness.pi as never);
+    await harness.emitLifecycle("session_start");
+    const sender = await waitForSessionByName(planner, "progress-worker");
+    orchestrator.updatePresence({ status: "tool:existing" });
+    await waitForSessionStatus(planner, "orchestrator", "tool:existing");
+    const received = once(orchestrator, "message") as Promise<[SessionInfo, Message]>;
+    const tool = harness.tools.find((item) => item.name === "intercom")!;
+    const pending = tool.execute("ask-progress", { action: "ask", to: orchestrator.sessionId, message: "What is happening?" },
+      new AbortController().signal, (update: typeof updates[number]) => updates.push(update), harness.ctx);
+    const [, question] = await received;
+    orchestrator.sendMessageReceipt({ messageId: question.id, status: "receiver_received", timestamp: Date.now() });
+    orchestrator.updatePresence({ status: "thinking" });
+    orchestrator.updatePresence({ status: "tool:read" });
+    const deadline = Date.now() + 2000;
+    while (!updates.some((update) => update.details?.intercomAskProgress?.recipientStatus === "tool:read") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.ok(updates.some((update) => /recebida pela sessão|aceita pela sessão|encaminhada ao Pi/.test(update.content[0]?.text ?? "")));
+    assert.ok(updates.some((update) => update.details?.intercomAskProgress?.recipientStatus === "tool:existing"));
+    assert.ok(updates.some((update) => update.details?.intercomAskProgress?.recipientStatus === "thinking"));
+    assert.ok(updates.some((update) => update.details?.intercomAskProgress?.recipientStatus === "tool:read"));
+    await orchestrator.send(sender.id, { text: "I am done.", replyTo: question.id });
+    assert.match((await pending).content[0]?.text ?? "", /I am done/);
+    const count = updates.length;
+    orchestrator.updatePresence({ status: "idle" });
+    await waitForSessionStatus(planner, "progress-worker", "idle");
+    assert.equal(updates.length, count);
+  } finally {
+    await harness.emitLifecycle("session_shutdown");
+    await cleanup();
+  }
+});
+
+test("blocking ask fails promptly when its recipient disconnects", { concurrency: false }, async () => {
+  const { planner, orchestrator, cleanup } = await setupClients();
+  const harness = createExtensionHarness("disconnect-worker", { sessionId: "session-disconnect-worker" });
+  try {
+    const { default: piIntercomExtension } = await import("./index.ts");
+    piIntercomExtension(harness.pi as never);
+    await harness.emitLifecycle("session_start");
+    await waitForSessionByName(planner, "disconnect-worker");
+    const received = once(orchestrator, "message") as Promise<[SessionInfo, Message]>;
+    const tool = harness.tools.find((item) => item.name === "intercom")!;
+    const pending = tool.execute("ask-disconnect", { action: "ask", to: orchestrator.sessionId, message: "Are you there?" },
+      new AbortController().signal, undefined, harness.ctx);
+    await received;
+    await orchestrator.disconnect();
+    const result = await pending;
+    assert.equal(result.details?.error, true);
+    assert.match(result.content[0]?.text ?? "", /disconnected while waiting for a reply/);
+  } finally {
+    await harness.emitLifecycle("session_shutdown");
     await cleanup();
   }
 });

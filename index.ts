@@ -2102,6 +2102,7 @@ Usage:
           let replyPromise: Promise<Message> | null = null;
           let deliveryState = "created";
           let questionId: string | null = null;
+          let stopProgress: (() => void) | undefined;
 
           try {
             if (openProjectPaneIfMissing && !cwd) {
@@ -2146,6 +2147,59 @@ Usage:
             questionId = randomUUID();
             replyPromise = waitForReply(sendTo, questionId, _signal, () => connectedClient.cancelAsk(questionId!), () => latestDeliveryState(questionId, deliveryState));
             replyPromise.catch(() => undefined);
+            const startedAt = Date.now();
+            let recipientStatus = "";
+            let lastProgress = "";
+            let recipientDisconnected = false;
+            let progressActive = true;
+            const receiptLabels: Record<string, string> = {
+              created: "preparando envio",
+              socket_delivered: "entregue ao broker",
+              receiver_received: "recebida pela sessão",
+              acknowledged: "aceita pela sessão",
+              injected: "encaminhada ao Pi",
+              queued: "na fila da sessão",
+            };
+            const reportProgress = (force = false) => {
+              if (!progressActive) return;
+              const state = latestDeliveryState(questionId, deliveryState);
+              const phase = recipientDisconnected ? "destinatário desconectado" : receiptLabels[state] ?? state;
+              const work = recipientStatus.startsWith("tool:")
+                ? `executando ${recipientStatus.slice(5)}`
+                : recipientStatus.startsWith("thinking") ? "pensando" : recipientStatus.startsWith("idle") ? "ocioso" : "";
+              const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+              const progress = `${phase}${work ? ` · destinatário ${work}` : ""}`;
+              if (!force && progress === lastProgress) return;
+              lastProgress = progress;
+              _onUpdate?.({
+                content: [{ type: "text", text: `Aguardando ${targetDisplay} · ${progress} · ${elapsed}s` }],
+                details: { intercomAskProgress: { target: targetDisplay, phase, recipientStatus, elapsedMs: Date.now() - startedAt } },
+              });
+            };
+            const unsubscribe = connectedClient.onBrokerMessage((event) => {
+              if (event.type === "message_receipt" && event.receipt.messageId === questionId) {
+                reportProgress();
+              } else if (event.type === "presence_update" && event.session.id === sendTo) {
+                recipientStatus = event.session.status ?? "";
+                reportProgress();
+              } else if (event.type === "session_left" && event.sessionId === sendTo) {
+                recipientDisconnected = true;
+                reportProgress();
+                connectedClient.cancelAsk(questionId!);
+                rejectReplyWaiter(new Error(`Session "${targetDisplay}" disconnected while waiting for a reply. The request may already have been processed; check the recipient before retrying.`));
+              }
+            });
+            const progressTimer = setInterval(() => reportProgress(true), 5000);
+            progressTimer.unref?.();
+            stopProgress = () => { progressActive = false; unsubscribe(); clearInterval(progressTimer); };
+            reportProgress();
+            // Presence may already be "thinking" or "tool:<name>" before the
+            // ask. Read a snapshot without delaying delivery of the question.
+            void connectedClient.listSessions().then((sessions) => {
+              if (!progressActive || recipientStatus) return;
+              recipientStatus = sessions.find((session) => session.id === sendTo)?.status ?? "";
+              reportProgress();
+            }).catch(() => undefined);
             const sendResult = await connectedClient.send(sendTo, {
               messageId: questionId,
               text: message,
@@ -2157,6 +2211,7 @@ Usage:
             });
 
             deliveryState = sendResult.delivered ? "socket_delivered" : "delivery_failed";
+            reportProgress();
             if (!sendResult.delivered) {
               const errorText = sendResult.reason ?? "Session may not exist or has disconnected.";
               rejectReplyWaiter(new Error(`Message to "${targetDisplay}" was not delivered: ${errorText}`));
@@ -2206,6 +2261,8 @@ Usage:
               content: [{ type: "text", text: `Failed: ${getErrorMessage(error)}` }],
               details: { error: true, ...(questionId ? { messageId: questionId, deliveryState: latestDeliveryState(questionId, deliveryState) } : {}) },
             };
+          } finally {
+            stopProgress?.();
           }
         }
 
@@ -2326,7 +2383,7 @@ Usage:
     },
     renderResult(result, { isPartial }, theme, context) {
       if (isPartial) {
-        return new Text(theme.fg("warning", "Intercom working..."), 0, 0);
+        return new Text(theme.fg("warning", firstTextContent(result) || "Intercom working..."), 0, 0);
       }
       const details = result.details as { delivered?: boolean; error?: boolean; messageId?: string; reason?: string } | undefined;
       const failed = Boolean(context.isError || details?.error === true || details?.delivered === false);
